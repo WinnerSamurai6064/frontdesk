@@ -24,7 +24,8 @@
     "@modelcontextprotocol/sdk": "latest",
     "express": "latest",
     "cors": "latest",
-    "pg": "latest"
+    "pg": "latest",
+    "filestack-js": "latest"
   },
   "devDependencies": {}
 }
