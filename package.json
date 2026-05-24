@@ -8,6 +8,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
+    "start": "node mcp/server.js",
     "claude": "claude",
     "mcp": "node mcp/server.js",
     "mcp:dev": "node --watch mcp/server.js",
