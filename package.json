@@ -10,7 +10,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "claude": "claude",
     "mcp": "node mcp/server.js",
-    "mcp:dev": "node --watch mcp/server.js"
+    "mcp:dev": "node --watch mcp/server.js",
+    "db:init": "node scripts/init-db.js"
   },
   "dependencies": {
     "@phosphor-icons/react": "latest",
@@ -22,7 +23,8 @@
     "@tailwindcss/vite": "latest",
     "@modelcontextprotocol/sdk": "latest",
     "express": "latest",
-    "cors": "latest"
+    "cors": "latest",
+    "pg": "latest"
   },
   "devDependencies": {}
 }
