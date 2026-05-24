@@ -44,6 +44,9 @@ export async function initDatabase() {
       summary text not null,
       body text not null,
       sources jsonb not null default '[]'::jsonb,
+      image jsonb,
+      image_credit text default '',
+      image_license_note text default '',
       tone text not null default 'neutral, clear, modern news desk',
       status text not null default 'draft',
       created_at timestamptz not null default now(),
@@ -60,6 +63,9 @@ export async function initDatabase() {
       summary text not null,
       body text not null,
       sources jsonb not null default '[]'::jsonb,
+      image jsonb,
+      image_credit text default '',
+      image_license_note text default '',
       tone text not null default 'neutral, clear, modern news desk',
       status text not null default 'published',
       approval_note text not null,
@@ -67,6 +73,13 @@ export async function initDatabase() {
       updated_at timestamptz not null default now()
     );
   `);
+
+  await query('alter table article_drafts add column if not exists image jsonb;');
+  await query("alter table article_drafts add column if not exists image_credit text default '';");
+  await query("alter table article_drafts add column if not exists image_license_note text default '';");
+  await query('alter table published_articles add column if not exists image jsonb;');
+  await query("alter table published_articles add column if not exists image_credit text default '';");
+  await query("alter table published_articles add column if not exists image_license_note text default '';");
 
   await query('create index if not exists idx_article_drafts_created_at on article_drafts (created_at desc);');
   await query('create index if not exists idx_published_articles_published_at on published_articles (published_at desc);');
@@ -82,6 +95,9 @@ export function rowToDraft(row) {
     summary: row.summary,
     body: row.body,
     sources: row.sources || [],
+    image: row.image || null,
+    imageCredit: row.image_credit || '',
+    imageLicenseNote: row.image_license_note || '',
     tone: row.tone,
     status: row.status,
     createdAt: row.created_at,
@@ -98,6 +114,9 @@ export function rowToPublishedArticle(row) {
     summary: row.summary,
     body: row.body,
     sources: row.sources || [],
+    image: row.image || null,
+    imageCredit: row.image_credit || '',
+    imageLicenseNote: row.image_license_note || '',
     tone: row.tone,
     status: row.status,
     approvalNote: row.approval_note,
