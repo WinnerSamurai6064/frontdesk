@@ -11,6 +11,7 @@ import {
   rowToPublishedArticle,
   rowToQueuedSource,
 } from './db.js';
+import { hasFilestack, storeImageUrl } from './filestack.js';
 
 const PORT = Number(process.env.PORT || 8787);
 const FRONTDESK_EDITOR_TOKEN = process.env.FRONTDESK_EDITOR_TOKEN || '';
@@ -44,7 +45,15 @@ function makeSlug(title) {
     .slice(0, 90);
 }
 
-async function createDraftRecord({ title, category, summary, body, sources, tone }) {
+function makeImageMetadata({ image, imageCredit = '', imageLicenseNote = '' }) {
+  return {
+    image: image || null,
+    imageCredit,
+    imageLicenseNote,
+  };
+}
+
+async function createDraftRecord({ title, category, summary, body, sources, tone, image, imageCredit, imageLicenseNote }) {
   const draft = {
     id: `draft_${Date.now()}`,
     slug: makeSlug(title),
@@ -53,6 +62,7 @@ async function createDraftRecord({ title, category, summary, body, sources, tone
     summary,
     body,
     sources,
+    ...makeImageMetadata({ image, imageCredit, imageLicenseNote }),
     tone,
     status: 'draft',
     createdAt: nowIso(),
@@ -66,10 +76,22 @@ async function createDraftRecord({ title, category, summary, body, sources, tone
 
   const result = await query(
     `insert into article_drafts
-      (id, slug, title, category, summary, body, sources, tone, status)
-     values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 'draft')
+      (id, slug, title, category, summary, body, sources, image, image_credit, image_license_note, tone, status)
+     values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, 'draft')
      returning *`,
-    [draft.id, draft.slug, title, category, summary, body, JSON.stringify(sources), tone],
+    [
+      draft.id,
+      draft.slug,
+      title,
+      category,
+      summary,
+      body,
+      JSON.stringify(sources),
+      JSON.stringify(image || null),
+      imageCredit,
+      imageLicenseNote,
+      tone,
+    ],
   );
 
   return rowToDraft(result.rows[0]);
@@ -114,6 +136,32 @@ async function listSourceRecords() {
   return result.rows.map(rowToQueuedSource);
 }
 
+async function attachImageToDraftRecord({ draftId, image, imageCredit, imageLicenseNote }) {
+  if (!hasDatabase) {
+    const draft = memory.drafts.find((item) => item.id === draftId);
+    if (!draft) throw new Error(`Draft not found: ${draftId}`);
+    draft.image = image;
+    draft.imageCredit = imageCredit;
+    draft.imageLicenseNote = imageLicenseNote;
+    draft.updatedAt = nowIso();
+    return draft;
+  }
+
+  const result = await query(
+    `update article_drafts
+     set image = $2::jsonb,
+         image_credit = $3,
+         image_license_note = $4,
+         updated_at = now()
+     where id = $1
+     returning *`,
+    [draftId, JSON.stringify(image), imageCredit, imageLicenseNote],
+  );
+
+  if (!result.rows[0]) throw new Error(`Draft not found: ${draftId}`);
+  return rowToDraft(result.rows[0]);
+}
+
 async function publishDraftRecord({ draftId, approvalNote }) {
   if (!hasDatabase) {
     const index = memory.drafts.findIndex((draft) => draft.id === draftId);
@@ -137,8 +185,8 @@ async function publishDraftRecord({ draftId, approvalNote }) {
 
   const publishedResult = await query(
     `insert into published_articles
-      (id, slug, title, category, summary, body, sources, tone, status, approval_note)
-     values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 'published', $9)
+      (id, slug, title, category, summary, body, sources, image, image_credit, image_license_note, tone, status, approval_note)
+     values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, 'published', $12)
      returning *`,
     [
       draft.id.replace('draft_', 'article_'),
@@ -148,6 +196,9 @@ async function publishDraftRecord({ draftId, approvalNote }) {
       draft.summary,
       draft.body,
       JSON.stringify(draft.sources || []),
+      JSON.stringify(draft.image || null),
+      draft.image_credit || '',
+      draft.image_license_note || '',
       draft.tone,
       approvalNote,
     ],
@@ -167,7 +218,7 @@ async function listPublishedRecords() {
 function createMcpServer() {
   const server = new McpServer({
     name: 'frontdesk-journalist-connector',
-    version: '0.2.0',
+    version: '0.3.0',
   });
 
   server.tool(
@@ -179,7 +230,7 @@ function createMcpServer() {
         {
           type: 'text',
           text:
-            'FrontDesk is a mobile-first news site covering Daily Brief, Nigeria, World, Technology, Urban Pulse and Entertainment. AI assistants may gather public news, summarize neutrally, draft articles, create source queues, and prepare posts. They must not publish without explicit owner approval.',
+            'FrontDesk is a mobile-first news site covering Daily Brief, Nigeria, World, Technology, Urban Pulse and Entertainment. AI assistants may gather public news, summarize neutrally, draft articles, create source queues, and prepare posts. They must not publish without explicit owner approval. For images, assistants should prefer licensed/public-domain/owned images, store approved image URLs in Filestack, and keep image credit/license notes with the draft.',
         },
       ],
     }),
@@ -187,7 +238,7 @@ function createMcpServer() {
 
   server.tool(
     'database_status',
-    'Check whether FrontDesk is using Aiven/Postgres storage or temporary memory storage.',
+    'Check whether FrontDesk is using Aiven/Postgres storage or temporary memory storage, and whether Filestack is configured.',
     {},
     async () => ({
       content: [
@@ -196,6 +247,7 @@ function createMcpServer() {
           text: JSON.stringify(
             {
               databaseConfigured: hasDatabase,
+              filestackConfigured: hasFilestack,
               storage: hasDatabase ? 'postgres' : 'memory',
               message: hasDatabase
                 ? 'Aiven/Postgres storage is active.'
@@ -210,6 +262,46 @@ function createMcpServer() {
   );
 
   server.tool(
+    'store_approved_image_url',
+    'Store an owner-approved or license-safe public HTTPS image URL in Filestack, then return reusable image metadata.',
+    {
+      imageUrl: z.string().url(),
+      filename: z.string().min(3),
+      imageCredit: z.string().default(''),
+      imageLicenseNote: z.string().default(''),
+      sourcePageUrl: z.string().url().optional(),
+    },
+    async ({ imageUrl, filename, imageCredit, imageLicenseNote, sourcePageUrl }) => {
+      const stored = await storeImageUrl({
+        imageUrl,
+        filename,
+        metadata: {
+          imageCredit,
+          imageLicenseNote,
+          sourcePageUrl: sourcePageUrl || '',
+        },
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                image: stored,
+                imageCredit,
+                imageLicenseNote,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
     'create_article_draft',
     'Create a FrontDesk article draft. This does not publish. Use after gathering and verifying sources.',
     {
@@ -218,10 +310,46 @@ function createMcpServer() {
       summary: z.string().min(20),
       body: z.string().min(80),
       sources: z.array(z.string().url()).default([]),
+      image: z.any().optional(),
+      imageCredit: z.string().default(''),
+      imageLicenseNote: z.string().default(''),
       tone: z.string().default('neutral, clear, modern news desk'),
     },
-    async ({ title, category, summary, body, sources, tone }) => {
-      const draft = await createDraftRecord({ title, category, summary, body, sources, tone });
+    async ({ title, category, summary, body, sources, image, imageCredit, imageLicenseNote, tone }) => {
+      const draft = await createDraftRecord({
+        title,
+        category,
+        summary,
+        body,
+        sources,
+        image: image || null,
+        imageCredit,
+        imageLicenseNote,
+        tone,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(draft, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    'attach_image_to_draft',
+    'Attach Filestack image metadata to an existing FrontDesk draft after owner approval or license review.',
+    {
+      draftId: z.string(),
+      image: z.any(),
+      imageCredit: z.string().default(''),
+      imageLicenseNote: z.string().default(''),
+    },
+    async ({ draftId, image, imageCredit, imageLicenseNote }) => {
+      const draft = await attachImageToDraftRecord({ draftId, image, imageCredit, imageLicenseNote });
 
       return {
         content: [
@@ -329,10 +457,13 @@ app.get('/', (_req, res) => {
     name: 'FrontDesk Journalist MCP Connector',
     status: 'ok',
     storage: hasDatabase ? 'postgres' : 'memory',
+    filestack: hasFilestack ? 'configured' : 'missing FILESTACK_API_KEY',
     mcpEndpoint: '/mcp',
     tools: [
       'frontdesk_brief',
       'database_status',
+      'store_approved_image_url',
+      'attach_image_to_draft',
       'create_article_draft',
       'list_article_drafts',
       'queue_news_source',
@@ -385,4 +516,5 @@ if (hasDatabase) {
 app.listen(PORT, () => {
   console.log(`FrontDesk MCP connector running on http://localhost:${PORT}/mcp`);
   console.log(`Storage mode: ${hasDatabase ? 'postgres' : 'memory'}`);
+  console.log(`Filestack: ${hasFilestack ? 'configured' : 'missing FILESTACK_API_KEY'}`);
 });
