@@ -1,0 +1,23 @@
+{
+  "name": "frontdesk",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "FrontDesk — daily Nigerian, international, technology, urban lifestyle and entertainment news.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "claude": "claude"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "latest",
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "tailwindcss": "latest",
+    "@tailwindcss/vite": "latest"
+  },
+  "devDependencies": {}
+}
