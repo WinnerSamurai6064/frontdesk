@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   BellRinging,
@@ -16,7 +17,8 @@ import {
   Sparkle,
   TrendUp,
 } from '@phosphor-icons/react';
-import { categories, leadStory, stories, tickerItems } from './data/news';
+import { categories, leadStory as fallbackLeadStory, stories as fallbackStories, tickerItems } from './data/news';
+import { API_BASE_URL, fetchPublishedArticles } from './lib/api';
 
 function Badge({ children, tone = 'dark' }) {
   const tones = {
@@ -31,6 +33,15 @@ function Badge({ children, tone = 'dark' }) {
       {children}
     </span>
   );
+}
+
+function formatDate(value) {
+  if (!value) return 'Updated today';
+  try {
+    return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value));
+  } catch {
+    return 'Updated today';
+  }
 }
 
 function StoryCard({ story, large = false }) {
@@ -68,10 +79,17 @@ function StoryCard({ story, large = false }) {
             {story.summary}
           </p>
 
-          <button className="mt-auto inline-flex w-fit items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-black text-white transition hover:bg-blue-700">
-            Read story
-            <ArrowRight size={16} weight="bold" />
-          </button>
+          <div className="mt-auto flex flex-wrap items-center justify-between gap-3">
+            <button className="inline-flex w-fit items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-black text-white transition hover:bg-blue-700">
+              Read story
+              <ArrowRight size={16} weight="bold" />
+            </button>
+            {story.publishedAt && (
+              <span className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+                {formatDate(story.publishedAt)}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </article>
@@ -91,8 +109,60 @@ function DeskItem({ icon: Icon, title, text }) {
 }
 
 export default function App() {
-  const mainStory = stories[0];
-  const otherStories = stories.slice(1);
+  const [backendStories, setBackendStories] = useState([]);
+  const [apiState, setApiState] = useState('loading');
+  const [apiError, setApiError] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadArticles() {
+      try {
+        const articles = await fetchPublishedArticles();
+        if (!alive) return;
+        setBackendStories(articles);
+        setApiState(articles.length ? 'live' : 'empty');
+      } catch (error) {
+        if (!alive) return;
+        setApiState('error');
+        setApiError(error.message || 'Could not load FrontDesk backend.');
+      }
+    }
+
+    loadArticles();
+    const timer = window.setInterval(loadArticles, 60000);
+
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const displayStories = backendStories.length ? backendStories : fallbackStories;
+  const mainStory = displayStories[0];
+  const otherStories = displayStories.slice(1);
+
+  const heroStory = useMemo(() => {
+    if (!backendStories.length) return fallbackLeadStory;
+
+    return {
+      eyebrow: 'Live Desk',
+      title: mainStory.title,
+      summary: mainStory.summary,
+      category: mainStory.category,
+      readTime: mainStory.readTime,
+      location: mainStory.tag || 'FrontDesk Live',
+      image: mainStory.image,
+      publishedAt: mainStory.publishedAt,
+    };
+  }, [backendStories.length, mainStory]);
+
+  const apiLabel = {
+    loading: 'Connecting to newsroom',
+    live: 'Live from backend',
+    empty: 'Backend ready, no published stories yet',
+    error: 'Using fallback stories',
+  }[apiState];
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
@@ -117,6 +187,9 @@ export default function App() {
           </nav>
 
           <div className="flex items-center gap-2">
+            <span className="hidden rounded-full bg-slate-100 px-3 py-2 text-xs font-black uppercase tracking-[0.16em] text-slate-600 md:inline-flex">
+              {apiLabel}
+            </span>
             <button className="grid h-11 w-11 place-items-center rounded-full border border-slate-200 bg-white text-slate-950 transition hover:border-blue-200 hover:bg-blue-50">
               <MagnifyingGlass size={20} weight="bold" />
             </button>
@@ -135,45 +208,51 @@ export default function App() {
             <div className="mb-5 flex flex-wrap items-center gap-3">
               <Badge tone="red">
                 <Radio size={14} weight="fill" />
-                {leadStory.eyebrow}
+                {heroStory.eyebrow}
               </Badge>
               <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-slate-200">
                 <CalendarBlank size={15} weight="bold" />
-                Updated today
+                {formatDate(heroStory.publishedAt)}
               </span>
             </div>
 
             <h1 className="max-w-4xl text-4xl font-black leading-[0.96] tracking-tight md:text-6xl lg:text-7xl">
-              {leadStory.title}
+              {heroStory.title}
             </h1>
 
             <p className="mt-6 max-w-2xl text-base leading-8 text-slate-300 md:text-lg">
-              {leadStory.summary}
+              {heroStory.summary}
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <button className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-black text-slate-950 transition hover:bg-blue-100">
+              <a href="#latest" className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-black text-slate-950 transition hover:bg-blue-100">
                 Start reading
                 <ArrowRight size={18} weight="bold" />
-              </button>
-              <button className="inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/10 px-6 py-3 text-sm font-black text-white transition hover:bg-white/15">
-                View desks
+              </a>
+              <a href={API_BASE_URL + '/api/articles'} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/10 px-6 py-3 text-sm font-black text-white transition hover:bg-white/15">
+                View live API
                 <CaretRight size={18} weight="bold" />
-              </button>
+              </a>
             </div>
+
+            {apiState === 'error' && (
+              <p className="mt-4 max-w-xl rounded-2xl border border-red-400/30 bg-red-500/10 p-4 text-sm font-semibold text-red-100">
+                Backend connection issue: {apiError}. Showing fallback stories until the API responds.
+              </p>
+            )}
           </div>
 
           <div className="relative">
             <div className="overflow-hidden rounded-[2.25rem] border border-white/10 bg-white/10 p-3 shadow-2xl shadow-black/30 backdrop-blur-xl">
-              <img src={leadStory.image} alt="" className="h-[26rem] w-full rounded-[1.65rem] object-cover" />
+              <img src={heroStory.image} alt="" className="h-[26rem] w-full rounded-[1.65rem] object-cover" />
               <div className="mt-3 grid gap-3 rounded-[1.65rem] bg-slate-950/80 p-5 md:grid-cols-3">
                 <div className="md:col-span-2">
-                  <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-300">{leadStory.category}</p>
-                  <h2 className="mt-2 text-xl font-black leading-tight">{leadStory.location}</h2>
+                  <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-300">{heroStory.category}</p>
+                  <h2 className="mt-2 text-xl font-black leading-tight">{heroStory.location}</h2>
                 </div>
                 <div className="flex items-center justify-start gap-2 text-sm font-bold text-slate-300 md:justify-end">
                   <Clock size={18} weight="bold" />
-                  {leadStory.readTime}
+                  {heroStory.readTime}
                 </div>
               </div>
             </div>
@@ -198,22 +277,25 @@ export default function App() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 py-12 lg:px-6">
+      <section id="latest" className="mx-auto max-w-7xl px-4 py-12 lg:px-6">
         <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
             <p className="text-sm font-black uppercase tracking-[0.25em] text-blue-700">Latest coverage</p>
             <h2 className="mt-2 text-3xl font-black tracking-tight md:text-5xl">Across the desks</h2>
+            <p className="mt-3 text-sm font-semibold text-slate-500">
+              {backendStories.length ? `${backendStories.length} live published stories loaded from ${API_BASE_URL}` : 'Fallback homepage is showing until published backend stories exist.'}
+            </p>
           </div>
-          <button className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-black transition hover:border-blue-200 hover:bg-blue-50">
-            Browse all stories
+          <a href={API_BASE_URL + '/api/articles'} target="_blank" rel="noreferrer" className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-black transition hover:border-blue-200 hover:bg-blue-50">
+            Browse live JSON
             <ShareNetwork size={18} weight="bold" />
-          </button>
+          </a>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
           <StoryCard story={mainStory} large />
           {otherStories.map((story) => (
-            <StoryCard key={story.title} story={story} />
+            <StoryCard key={story.id || story.title} story={story} />
           ))}
         </div>
       </section>
@@ -223,11 +305,11 @@ export default function App() {
           <div className="mb-8 max-w-3xl">
             <Badge tone="blue">
               <Broadcast size={15} weight="fill" />
-              News standard look
+              Backend connected
             </Badge>
-            <h2 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">Built for daily publishing, mobile readers and future Claude connectors.</h2>
+            <h2 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">FrontDesk now reads from the live MCP newsroom backend.</h2>
             <p className="mt-4 text-base leading-8 text-slate-300">
-              FrontDesk starts as a sharp static news front page. Next steps can add RSS feeds, CMS drafts, Claude-assisted summaries and connector tools for publishing from mobile.
+              Claude can publish through the connector, the VM stores articles in Postgres, and the Vercel frontend pulls published stories from the live API.
             </p>
           </div>
 
@@ -235,7 +317,7 @@ export default function App() {
             <DeskItem icon={GlobeHemisphereEast} title="Local + global" text="Nigeria-first coverage with international headlines beside it." />
             <DeskItem icon={Fire} title="Urban culture" text="Entertainment, creators, music, street style and youth lifestyle bits." />
             <DeskItem icon={DeviceMobile} title="Mobile-first" text="Fast card layout, readable spacing and clean navigation on phones." />
-            <DeskItem icon={Lightning} title="AI-ready" text="Prepared for future Claude workflows, article drafts and editor tools." />
+            <DeskItem icon={Lightning} title="AI-ready" text="Claude publishes through MCP and the site reads the API." />
           </div>
         </div>
       </section>
